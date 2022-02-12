@@ -1,0 +1,976 @@
+
+version: "3.8"
+
+networks:
+### networks
+  # Network accessible from outside
+  traefik_proxy:
+    driver: bridge
+    name: traefik_proxy
+    ipam:
+      config:
+        - subnet: 172.18.0.0/24
+          gateway: 172.18.0.1
+  # Network only for internal services
+  backend:
+    driver: bridge
+    name: backend
+    ipam:
+      config:
+        - subnet: 172.19.0.0/24
+          gateway: 172.19.0.1
+  # Seafile on extra network due to root MariaDB access
+  seafile:
+    driver: bridge
+    name: seafile
+    ipam:
+      config:
+        - subnet: 172.200.0.0/24
+          gateway: 172.200.0.1
+  default:
+    driver: bridge
+
+secrets:
+### Secrets
+  general_gmail_smtp_password_secret:
+    file: $DOCKERDIR/secrets/general_gmail_smtp_password_secret
+  authelia_duo_api_secret:
+    file: $DOCKERDIR/secrets/authelia_duo_api_secret
+  authelia_jwt_secret:
+    file: $DOCKERDIR/secrets/authelia_jwt_secret
+  Blueriiot__Password:
+    file: $DOCKERDIR/secrets/Blueriiot__Password
+  cloudflare_api_key_global_secret:
+    file: $DOCKERDIR/secrets/cloudflare_api_key_global_secret
+  cloudflare_api_key_net_secret:
+    file: $DOCKERDIR/secrets/cloudflare_api_key_net_secret
+  cf_token: #Cloudflare Companion expects CF_TOKEN as secret and needs global token
+    file: $DOCKERDIR/secrets/cloudflare_api_key_global_secret
+  hassio_mariadb_hassio_passwd_secret:
+    file: $DOCKERDIR/secrets/hassio_mariadb_hassio_passwd_secret
+  hassio_mariadb_root_passwd_secret:
+    file: $DOCKERDIR/secrets/hassio_mariadb_root_passwd_secret
+  mealie_postgres_mealie_passwd_secret:
+    file: $DOCKERDIR/secrets/mealie_postgres_mealie_passwd_secret
+  MQTT__Password:
+    file: $DOCKERDIR/secrets/MQTT__Password
+  paperless_db_passwd_secret:
+    file: $DOCKERDIR/secrets/paperless_db_passwd_secret
+  paperless_secrets_key_secret:
+    file: $DOCKERDIR/secrets/paperless_secrets_key_secret
+  paperless_postgress_root_passwd_secret:
+    file: $DOCKERDIR/secrets/paperless_postgress_root_passwd_secret
+  planka_postgress_root_passwd_secret:
+    file: $DOCKERDIR/secrets/planka_postgress_root_passwd_secret
+  seafile_mariadb_root_passwd_secret:
+    file: $DOCKERDIR/secrets/seafile_mariadb_root_passwd_secret
+  vaultwarden_admin_token_secret:
+    file: $DOCKERDIR/secrets/vaultwarden_admin_token_secret
+  vaultwarden_mariadb_root_passwd_secret:
+    file: $DOCKERDIR/secrets/vaultwarden_mariadb_root_passwd_secret
+  vaultwarden_mariadb_vaultwarden_passwd_secret:
+    file: $DOCKERDIR/secrets/vaultwarden_mariadb_vaultwarden_passwd_secret
+  vaultwarden_db_url_secret:
+    file: $DOCKERDIR/secrets/vaultwarden_db_url_secret
+
+services:
+### Networking / Auth
+  traefik:
+    container_name: traefik
+    image: traefik:2.6.0 #fixedversion
+    restart: unless-stopped
+    command: # CLI arguments
+      - --global.checkNewVersion=true
+      - --global.sendAnonymousUsage=true
+      - --entrypoints.http.address=:80
+      - --entrypoints.https.address=:443
+        # Allow these IPs to set the X-Forwarded-* headers - Cloudflare IPs: https://www.cloudflare.com/ips/
+      - --entrypoints.https.forwardedHeaders.trustedIPs=173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22
+      - --entryPoints.traefik.address=:8080
+      - --api=true
+      #- --api.insecure=true
+      - --log=true
+      - --log.level=WARN # (Default: error) DEBUG, INFO, WARN, ERROR, FATAL, PANIC
+      - --accessLog=true
+      - --accessLog.filePath=/traefik.log
+      - --accessLog.bufferingSize=100 # Configuring a buffer of 100 lines
+      - --accessLog.filters.statusCodes=400-499
+      - --providers.docker=true
+      - --providers.docker.endpoint=unix:///var/run/docker.sock
+      - --providers.docker.defaultrule=Host(`{{ index .Labels "com.docker.compose.service" }}.$DOMAINNAME`)
+      - --providers.docker.exposedByDefault=false
+      - --providers.docker.network=traefik_proxy
+      - --providers.docker.swarmMode=false
+      - --providers.file.directory=/rules # Load dynamic configuration from one or more .toml or .yml files in a directory.
+      - --providers.file.watch=true # Only works on top level files in the rules folder
+      #- --certificatesResolvers.dns-cloudflare.acme.caServer=https://acme-staging-v02.api.letsencrypt.org/directory # LetsEncrypt Staging Server - uncomment when testing
+      - --certificatesResolvers.dns-cloudflare.acme.email=$EMAIL
+      - --certificatesResolvers.dns-cloudflare.acme.storage=/acme.json
+      - --certificatesResolvers.dns-cloudflare.acme.dnsChallenge.provider=cloudflare
+      - --certificatesResolvers.dns-cloudflare.acme.dnsChallenge.resolvers=1.1.1.1:53,1.0.0.1:53
+      - --certificatesResolvers.dns-cloudflare.acme.dnsChallenge.delayBeforeCheck=90 # To delay DNS check and reduce LE hitrate
+    networks:
+      - traefik_proxy
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "80:80"
+      - "443:443"    
+    volumes:
+      - ${DOCKERDIR}/traefik/acme/acme.json:/acme.json
+      - ${DOCKERDIR}/traefik/rules:/rules
+      - ${DOCKERDIR}/traefik/traefik.log:/traefik.log
+      - ${DOCKERDIR}/shared:/shared
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    extra_hosts:
+      host.docker.internal: "172.18.0.1"
+    environment:
+      CF_API_EMAIL: $EMAIL
+      CF_API_KEY_FILE: /run/secrets/cloudflare_api_key_global_secret
+    secrets:
+      - cloudflare_api_key_global_secret
+    labels:
+      traefik.enable: true
+      # HTTP to HTTPS Redirect (http-catchall)
+      traefik.http.routers.http-catchall.entrypoints: http
+      traefik.http.routers.http-catchall.rule: HostRegexp(`{host:.+}`)
+      traefik.http.routers.http-catchall.middlewares: redirect-to-https
+      traefik.http.middlewares.redirect-to-https.redirectscheme.scheme: https
+      # HTTP Routers
+      traefik.http.routers.traefik-rtr.entrypoints: https
+      traefik.http.routers.traefik-rtr.rule: HostHeader(`traefik.$DOMAINNAME`)
+      traefik.http.routers.traefik-rtr.tls: true
+      #- "traefik.http.routers.traefik-rtr.tls.certresolver=dns-cloudflare" # Comment out this line after first run of traefik to force the use of wildcard certs
+      traefik.http.routers.traefik-rtr.tls.domains[0].main: $DOMAINNAME
+      traefik.http.routers.traefik-rtr.tls.domains[0].sans: "*.$DOMAINNAME"
+      ## Services - API
+      traefik.http.routers.traefik-rtr.service: api@internal
+      ## Middlewares
+      traefik.http.routers.traefik-rtr.middlewares: chain-authelia@file
+
+  cloudflare-ddns:
+    container_name: cloudflare-ddns
+    image: oznu/cloudflare-ddns:latest
+    restart: unless-stopped
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      API_KEY_FILE: /run/secrets/cloudflare_api_key_net_secret
+      ZONE: $DOMAINNAME
+      PROXIED: "true"
+    secrets:
+      - cloudflare_api_key_net_secret
+  
+  cloudflare-companion:
+    container_name: cloudflare-companion
+    image: tiredofit/traefik-cloudflare-companion:latest
+    restart: unless-stopped
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      TIMEZONE: $TZ
+      CF_EMAIL: $EMAIL
+      CF_TOKEN_FILE: /run/secrets/cf_token
+      TARGET_DOMAIN: $DOMAINNAME
+      DOMAIN1: $DOMAINNAME
+      DOMAIN1_ZONE_ID: $CF_ZONE_ID_NET
+      DOMAIN1_PROXIED: "TRUE"
+    secrets:
+      - cf_token
+    labels:
+      # Add hosts specified in rules here to force cf-companion to create the CNAMEs
+      # Since cf-companion creates CNAMEs based on host rules, this a workaround for non-docker/external apps
+      traefik.http.routers.cf-companion-rtr.rule: HostHeader(`omv.$DOMAINNAME`)" #|| HostHeader(`vpn.$DOMAINNAME`)"
+
+  # wireguard:
+  #   container_name: wireguard
+  #   image: linuxserver/wireguard:latest
+  #   restart: unless-stopped
+  #   network_mode: host
+  #   security_opt:
+  #     - no-new-privileges:true
+  #   # ports:
+  #   #   - target: 51820
+  #   #     published: 51820
+  #   #     protocol: udp
+  #   #     mode: host
+  #   volumes:
+  #     - $DOCKERDIR/wireguard:/config
+  #     - /lib/modules:/lib/modules
+  #   environment:
+  #     PUID: $PUID
+  #     PGID: $PGID
+  #     TZ: $TZ
+  #     SERVERURL: "killertic.ddns.net"
+  #     PEERS: 2
+  #     PEERDNS: "1.1.1.1"
+  #   cap_add:
+  #     - NET_ADMIN
+  #     - SYS_MODULE
+  #   # sysctls:
+  #   #   - net.ipv4.conf.all.src_valid_mark=1
+
+  authelia:
+    container_name: authelia
+    image: authelia/authelia:4.33.2
+    restart: unless-stopped
+    networks:
+      - traefik_proxy
+    depends_on:
+      - traefik
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/authelia/config:/config
+    environment:
+      TZ: $TZ
+      AUTHELIA_JWT_SECRET_FILE: /run/secrets/authelia_jwt_secret
+      AUTHELIA_DUO_API_SECRET_KEY_FILE: /run/secrets/authelia_duo_api_secret
+      #AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE: /run/secrets/general_gmail_smtp_password_secret
+    secrets:
+      - authelia_jwt_secret
+      - authelia_duo_api_secret
+      - general_gmail_smtp_password_secret
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.authelia-rtr.entrypoints: https
+      traefik.http.routers.authelia-rtr.rule: HostHeader(`authelia.$DOMAINNAME`)
+      traefik.http.routers.authelia-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.authelia-rtr.service: authelia-svc
+      traefik.http.services.authelia-svc.loadbalancer.server.port: 9091
+      ## Middlewares
+      traefik.http.routers.authelia-rtr.middlewares: chain-authelia@file
+
+### Databases / Message brokers
+  hassio-mariadb:
+    container_name: hassio-mariadb
+    image: mariadb:10.7.1 #fixedVersion
+    restart: unless-stopped
+    networks:
+      backend:
+        ipv4_address: 172.19.0.254
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/hassio-mariadb:/var/lib/mysql
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+      TZ: $TZ
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/hassio_mariadb_root_passwd_secret
+      MYSQL_PASSWORD_FILE: /run/secrets/hassio_mariadb_hassio_passwd_secret
+      MYSQL_DATABASE: hassio
+      MYSQL_USER: hassio
+    secrets:
+      - hassio_mariadb_root_passwd_secret
+      - hassio_mariadb_hassio_passwd_secret
+  
+  vaultwarden-mariadb:
+    container_name: vaultwarden-mariadb
+    image: mariadb:10.6.5 #fixedVersion
+    restart: unless-stopped
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/vaultwarden-mariadb:/var/lib/mysql
+      - /etc/localtime:/etc/localtime:ro
+      - $DOCKERDIR/shared:/shared
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/vaultwarden_mariadb_root_passwd_secret
+      MYSQL_PASSWORD_File: /run/secrets/vaultwarden_mariadb_vaultwarden_passwd_secret
+      MYSQL_DATABASE: vaultwarden
+      MYSQL_USER: vaultwarden
+    secrets:
+      - vaultwarden_mariadb_root_passwd_secret
+      - vaultwarden_mariadb_vaultwarden_passwd_secret
+  
+  seafile-mariadb:
+    container_name: seafile-mariadb
+    image: mariadb:10.6.5 #fixedVersion
+    restart: unless-stopped
+    networks:
+      - seafile
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/seafile-mariadb:/var/lib/mysql
+      - $DOCKERDIR/seafile-mariadb/my.cnf:/etc/mysql/my.cnf
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+      TZ: $TZ
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/seafile_mariadb_root_passwd_secret
+    secrets:
+      - seafile_mariadb_root_passwd_secret
+    
+  seafile-memcached:
+    container_name: seafile-memcached
+    image: memcached:1.5.6 #fixedVersion
+    restart: unless-stopped
+    entrypoint: memcached -m 256
+    networks:
+      - seafile
+    security_opt:
+      - no-new-privileges:true
+  
+  mealie-postgres:
+    container_name: mealie-postgres
+    image: postgres:13 #fixedVersion
+    restart: unless-stopped
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/mealie-postgres:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: mealie
+      POSTGRES_DB: mealie
+      POSTGRES_PASSWORD_FILE: /run/secrets/mealie_postgres_mealie_passwd_secret
+    secrets:
+      - mealie_postgres_mealie_passwd_secret
+
+  paperless-postgres:
+    container_name: paperless-postgres
+    image: postgres:13 #fixedVersion
+    restart: unless-stopped
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/paperless-postgres:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/paperless_postgress_root_passwd_secret
+    secrets:
+      - paperless_postgress_root_passwd_secret
+  
+  paperless-redis:
+    container_name: paperless-redis
+    image: redis:6.0 #fixedVersion
+    restart: unless-stopped
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+  
+  planka-postgres:
+    container_name: planka-postgres
+    image: postgres:13 #fixedVersion
+    restart: unless-stopped
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/planka-postgres:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/planka_postgress_root_passwd_secret
+    secrets:
+      - planka_postgress_root_passwd_secret
+
+  mqtt:
+    container_name: mqtt
+    image: eclipse-mosquitto:latest
+    restart: unless-stopped
+    networks:
+      - backend
+    ports:
+      - "1883:1883"
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/mqtt/config:/mosquitto/config
+      - $DOCKERDIR/mqtt/data:/mosquitto/data
+      - $DOCKERDIR/mqtt/log:/mosquitto/log
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+      TZ: $TZ
+
+### Admin Tools / Monitoring
+  glances:
+    container_name: glances
+    image: nicolargo/glances:latest
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    privileged: true
+    networks:
+      - traefik_proxy
+    ports:
+      - "61208:61208"
+    pid: host
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      TZ: $TZ
+      PUID: $PUID
+      PGID: $PGID
+      GLANCES_OPT: "-w"
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.glances-rtr.entrypoints: https
+      traefik.http.routers.glances-rtr.rule: HostHeader(`glances.$DOMAINNAME`)
+      traefik.http.routers.glances-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.glances-rtr.service: glances-svc
+      traefik.http.services.glances-svc.loadbalancer.server.port: 61208
+      ## Middlewares
+      traefik.http.routers.glances-rtr.middlewares: chain-authelia@file
+  
+  doozle:
+    container_name: doozle
+    image: amir20/dozzle:latest
+    restart: unless-stopped
+    networks:
+      - traefik_proxy
+    ports:
+      - 8080:8080
+    security_opt:
+      - no-new-privileges:true
+    volumes: 
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+      TZ: $TZ
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.doozle-rtr.entrypoints: https
+      traefik.http.routers.doozle-rtr.rule: HostHeader(`logs.$DOMAINNAME`)
+      traefik.http.routers.doozle-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.doozle-rtr.service: doozle-svc
+      traefik.http.services.doozle-svc.loadbalancer.server.port: 8080
+      ## Middlewares
+      traefik.http.routers.doozle-rtr.middlewares: chain-authelia@file
+
+  phpmyadmin:
+    container_name: phpmyadmin
+    image: phpmyadmin/phpmyadmin:latest
+    restart: unless-stopped
+    networks:
+      - traefik_proxy
+      - backend
+      - seafile
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+      TZ: $TZ
+      PMA_ARBITRARY: 1
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.pma-rtr.entrypoints: https
+      traefik.http.routers.pma-rtr.rule: HostHeader(`pma.$DOMAINNAME`)
+      traefik.http.routers.pma-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.pma-rtr.service: pma-svc
+      traefik.http.services.pma-svc.loadbalancer.server.port: 80
+      ## Middlewares
+      traefik.http.routers.pma-rtr.middlewares: chain-authelia@file
+
+  uptime-kuma:
+    container_name: uptime-kuma
+    image: louislam/uptime-kuma:latest
+    restart: unless-stopped
+    networks:
+      - traefik_proxy
+      - backend
+      - seafile
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/uptime-kuma:/app/data
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.uptime-rtr.entrypoints: https
+      traefik.http.routers.uptime-rtr.rule: HostHeader(`monitor.$DOMAINNAME`)
+      traefik.http.routers.uptime-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.uptime-rtr.service: uptime-svc
+      traefik.http.services.uptime-svc.loadbalancer.server.port: 3001
+      ## Middlewares
+      traefik.http.routers.uptime-rtr.middlewares: chain-authelia@file
+
+### Maintenance
+  certdumper:
+    container_name: traefik-certdumper
+    image: humenius/traefik-certs-dumper:latest
+    restart: unless-stopped
+    network_mode: none
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/certdumper:/output
+      - $DOCKERDIR/traefik/acme:/traefik:ro
+    environment:
+      DOMAIN: $DOMAINNAME
+      OVERRIDE_UID: $PUID
+      OVERRIDE_GID: $PGID
+
+### Tools
+  blueriiot2mqtt:
+    container_name: blueriiot2mqtt
+    image: lordmike/blueriiot2mqtt:latest
+    restart: unless-stopped
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+      TZ: $TZ
+      MQTT__SERVER: mqtt
+      MQTT__USERNAME: $MQTT_USER
+      BlueRiiot__Username: $EMAIL
+      BlueRiiot__UpdateInterval: 00:30:00
+      BlueRiiot__Language: "de"
+    secrets:
+      - Blueriiot__Password
+      - MQTT__Password
+    labels:
+      traefik.enable: "false"
+  
+  sigal:
+    container_name: sigal
+    image: killertic/sigal:latest
+    network_mode: none
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DATADIR/sigal:/sigal/output
+      - $DATADIR/photos:/sigal/input
+      - $DOCKERDIR/sigal/sigal.conf.py:/sigal/sigal.conf.py
+
+### Apps
+  vaultwarden:
+    container_name: vaultwarden
+    image: vaultwarden/server:latest
+    restart: unless-stopped
+    networks:
+      - traefik_proxy
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/vaultwarden:/data/
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+      TZ: $TZ
+      ADMIN_TOKEN_FILE: /run/secrets/vaultwarden_admin_token_secret
+      DATABASE_URL: $VAULTWARDEN_DB_URL
+    secrets:
+      - vaultwarden_admin_token_secret
+      - vaultwarden_db_url_secret
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.vaultwarden-rtr.entrypoints: https
+      traefik.http.routers.vaultwarden-rtr.rule: HostHeader(`passwd.$DOMAINNAME`)
+      traefik.http.routers.vaultwarden-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.vaultwarden-rtr.service: vaultwarden-svc
+      traefik.http.services.vaultwarden-svc.loadbalancer.server.port: 80
+      ## Middlewares
+      traefik.http.routers.vaultwarden-rtr.middlewares: chain-no-auth@file
+
+  hassio:
+    container_name: hassio
+    image: homeassistant/home-assistant:latest
+    hostname: hassio
+    restart: unless-stopped
+    network_mode: host
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - hassio-mariadb
+    volumes:
+      - $DOCKERDIR/hassio:/config
+      - $DOCKERDIR/shared:/shared
+      - /etc/timezone:/etc/timezone:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+      TZ: $TZ
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.hassio-rtr.entrypoints: https
+      traefik.http.routers.hassio-rtr.rule: HostHeader(`hassio.$DOMAINNAME`)
+      traefik.http.routers.hassio-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.hassio-rtr.service: hassio-svc
+      traefik.http.services.hassio-svc.loadbalancer.server.port: 8123
+      ## Middlewares
+      traefik.http.routers.hassio-rtr.middlewares: chain-no-auth@file
+
+  paperless-ng:
+    container_name: paperless-ng
+    image: jonaswinkler/paperless-ng:latest
+    restart: unless-stopped
+    networks:
+      - traefik_proxy
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      - paperless-redis
+      - paperless-postgres
+    volumes:
+      - $DOCKERDIR/paperless:/usr/src/paperless/data
+      - $DATADIR/paperless/media:/usr/src/paperless/media
+      - $DATADIR/paperless/export:/usr/src/paperless/export
+      - $DATADIR/paperless/consume:/usr/src/paperless/consume
+    environment:
+      USERMAP_UID: $PUID
+      USERMAP_GID: $PGID
+      PAPERLESS_TIME_ZONE: $TZ
+      PAPERLESS_OCR_LANGUAGE: deu+eng
+      PAPERLESS_REDIS: redis://paperless-redis:6379
+      PAPERLESS_DBHOST: paperless-postgres
+      PAPERLESS_DBNAME: $PAPERLESS_DBNAME
+      PAPERLESS_DBUSER: $PAPERLESS_DBUSER
+      PAPERLESS_DBPASS: $PAPERLESS_DBPASS
+      PAPERLESS_SECRET_KEY: $PAPERLESS_SECRET_KEY
+      PAPERLESS_FILENAME_FORMAT: "{created_year}/{correspondent}/{created} {title}"
+      #PAPERLESS_ALLOWED_HOSTS: "*vonroon.net"
+    secrets:
+      - paperless_db_passwd_secret
+      - paperless_secrets_key_secret
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.paperless-rtr.entrypoints: https
+      traefik.http.routers.paperless-rtr.rule: HostHeader(`docs.$DOMAINNAME`)
+      traefik.http.routers.paperless-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.paperless-rtr.service: paperless-svc
+      traefik.http.services.paperless-svc.loadbalancer.server.port: 8000
+      ## Middlewares
+      traefik.http.routers.paperless-rtr.middlewares: chain-authelia@file
+  
+  seafile:
+    container_name: seafile
+    image: seafileltd/seafile-mc:latest
+    restart: unless-stopped
+    networks:
+      - traefik_proxy
+      - seafile
+    ports:
+      - 8088:80
+    depends_on:
+      - seafile-mariadb
+      - seafile-memcached
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/seafile/logs:/shared/logs
+      - $DOCKERDIR/seafile/nginx:/shared/nginx
+      - $DATADIR/seafile:/shared/seafile
+    environment:
+      TIME_ZONE: $TZ
+      DB_HOST: seafile-mariadb
+      DB_ROOT_PASSWD: $SEAFILE_DB_ROOT_PASSWD
+      SEAFILE_ADMIN_EMAIL: $SEAFILE_ADMIN_EMAIL
+      SEAFILE_ADMIN_PASSWORD: $SEAFILE_ADMIN_PASSWORD
+      SEAFILE_SERVER_LETSENCRYPT: "false"
+      SEAFILE_SERVER_HOSTNAME: data.$DOMAINNAME
+      SEAFILE_SERVER_URL: https://data.$DOMAINNAME
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.seafile-rtr.entrypoints: https
+      traefik.http.routers.seafile-rtr.rule: HostHeader(`data.$DOMAINNAME`)
+      traefik.http.routers.seafile-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.seafile-rtr.service: seafile-svc
+      traefik.http.services.seafile-svc.loadbalancer.server.port: 80
+      ## Middlewares
+      traefik.http.routers.seafile-rtr.middlewares: chain-no-auth@file
+  
+  dashboard:
+    container_name: dashboard
+    image: phntxx/dashboard:latest
+    restart: unless-stopped
+    networks:
+      - traefik_proxy
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/dashboard:/app/data
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.dashboard-rtr.entrypoints: https
+      traefik.http.routers.dashboard-rtr.rule: HostHeader(`home.$DOMAINNAME`)
+      traefik.http.routers.dashboard-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.dashboard-rtr.service: dashboard-svc
+      traefik.http.services.dashboard-svc.loadbalancer.server.port: 8080
+      ## Middlewares
+      traefik.http.routers.dashboard-rtr.middlewares: chain-authelia@file
+  
+  sigal-nginx:
+    container_name: sigal-nginx
+    image: linuxserver/nginx:latest
+    restart: unless-stopped
+    networks:
+      - traefik_proxy
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DATADIR/sigal:/config/www
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+      TZ: $TZ
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.sigal-nginx-rtr.entrypoints: https
+      traefik.http.routers.sigal-nginx-rtr.rule: HostHeader(`photos.$DOMAINNAME`)
+      traefik.http.routers.sigal-nginx-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.sigal-nginx-rtr.service: sigal-nginx-svc
+      traefik.http.services.sigal-nginx-svc.loadbalancer.server.port: 80
+      ## Middlewares
+      traefik.http.routers.sigal-nginx-rtr.middlewares: chain-authelia@file
+  
+  planka:
+    container_name: planka
+    image: meltyshev/planka:latest
+    restart: unless-stopped
+    command: >
+      bash -c
+        "for i in `seq 1 30`; do
+          ./start.sh &&
+          s=$$? && break || s=$$?;
+          echo \"Tried $$i times. Waiting 5 seconds...\";
+          sleep 5;
+        done; (exit $$s)"
+    networks:
+      - traefik_proxy
+      - backend
+    depends_on:
+      - planka-postgres
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/planka/avatars:/app/public/user-avatars
+      - $DOCKERDIR/planka/background-images:/app/public/project-background-images
+      - $DOCKERDIR/planka/attachments:/app/public/attachments
+    environment:
+      BASE_URL: https://board.$DOMAINNAME
+      TRUST_PROXY: 0
+      DATABASE_URL: $PLANKA_DB_URL
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.planka-rtr.entrypoints: https
+      traefik.http.routers.planka-rtr.rule: HostHeader(`board.$DOMAINNAME`)
+      traefik.http.routers.planka-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.planka-rtr.service: planka-svc
+      traefik.http.services.planka-svc.loadbalancer.server.port: 1337
+      ## Middlewares
+      traefik.http.routers.planka-rtr.middlewares: chain-authelia@file
+  
+  mealie:
+    container_name: mealie
+    image: hkotel/mealie:latest
+    restart: unless-stopped
+    networks:
+      - traefik_proxy
+      - backend
+    depends_on:
+      - mealie-postgres
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/mealie:/app/data
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+      TZ: $TZ
+      DEFAULT_EMAIL: $EMAIL
+      BASE_URL: https://food.$DOMAINNAME
+      DB_ENGINE: postgres
+      POSTGRES_USER: mealie
+      POSTGRES_PASSWORD: $MEALIE_POSTGRES_PASSWD
+      POSTGRES_SERVER: mealie-postgres
+      RECIPE_DISABLE_COMMENTS: "TRUE"
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.mealie-rtr.entrypoints: https
+      traefik.http.routers.mealie-rtr.rule: HostHeader(`food.$DOMAINNAME`)
+      traefik.http.routers.mealie-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.mealie-rtr.service: mealie-svc
+      traefik.http.services.mealie-svc.loadbalancer.server.port: 80
+      ## Middlewares
+      traefik.http.routers.mealie-rtr.middlewares: chain-no-auth@file
+
+### Media
+  jellyfin:
+    container_name: jellyfin
+    image: lscr.io/linuxserver/jellyfin:latest
+    restart: unless-stopped
+    network_mode: host
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/jellyfin/config:/config
+      - $DOCKERDIR/jellyfin/cache:/cache
+      - /mnt/media:/media
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+      TZ: $TZ
+      JELLYFIN_PublishedServerUrl: https://media.$DOMAINNAME
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.jellyfin-rtr.entrypoints: https
+      traefik.http.routers.jellyfin-rtr.rule: HostHeader(`media.$DOMAINNAME`)
+      traefik.http.routers.jellyfin-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.jellyfin-rtr.service: jellyfin-svc
+      traefik.http.services.jellyfin-svc.loadbalancer.server.port: 8096
+      ## Middlewares
+      traefik.http.routers.jellyfin-rtr.middlewares: chain-authelia@file
+
+  sabnzbd:
+    container_name: sabnzbd
+    image: lscr.io/linuxserver/sabnzbd:latest
+    restart: unless-stopped
+    networks:
+      - traefik_proxy
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/sabnzbd:/config
+      - /mnt/media:/media
+      - /mnt/home/Clips:/adult
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+      TZ: $TZ
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.sabnzbd-rtr.entrypoints: https
+      traefik.http.routers.sabnzbd-rtr.rule: HostHeader(`download.$DOMAINNAME`)
+      traefik.http.routers.sabnzbd-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.sabnzbd-rtr.service: sabnzbd-svc
+      traefik.http.services.sabnzbd-svc.loadbalancer.server.port: 8080
+      ## Middlewares
+      traefik.http.routers.sabnzbd-rtr.middlewares: chain-authelia@file
+
+  sonarr:
+    container_name: sonarr
+    image: lscr.io/linuxserver/sonarr:latest
+    restart: unless-stopped
+    networks:
+      - traefik_proxy
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/sonarr:/config
+      - /mnt/media:/media
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+      TZ: $TZ
+      DOCKER_MODS: ghcr.io/gilbn/theme.park:sonarr
+      TP_THEME: overseerr
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.sonarr-rtr.entrypoints: https
+      traefik.http.routers.sonarr-rtr.rule: HostHeader(`series.$DOMAINNAME`)
+      traefik.http.routers.sonarr-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.sonarr-rtr.service: sonarr-svc
+      traefik.http.services.sonarr-svc.loadbalancer.server.port: 8989
+      ## Middlewares
+      traefik.http.routers.sonarr-rtr.middlewares: chain-authelia@file
+ 
+  radarr:
+    container_name: radarr
+    image: lscr.io/linuxserver/radarr:latest
+    restart: unless-stopped
+    networks:
+      - traefik_proxy
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/radarr:/config
+      - /mnt/media:/media
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+      TZ: $TZ
+      DOCKER_MODS: ghcr.io/gilbn/theme.park:radarr
+      TP_THEME: overseerr
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.radarr-rtr.entrypoints: https
+      traefik.http.routers.radarr-rtr.rule: HostHeader(`movies.$DOMAINNAME`)
+      traefik.http.routers.radarr-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.radarr-rtr.service: radarr-svc
+      traefik.http.services.radarr-svc.loadbalancer.server.port: 7878
+      ## Middlewares
+      traefik.http.routers.radarr-rtr.middlewares: chain-authelia@file
+  
+  requestrr:
+    container_name: requestrr
+    image: lscr.io/linuxserver/requestrr:latest
+    restart: unless-stopped
+    networks:
+      - traefik_proxy
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - $DOCKERDIR/requestrr:/config
+      - /mnt/media:/media
+    environment:
+      PUID: $PUID
+      PGID: $PGID
+      TZ: $TZ
+    labels:
+      traefik.enable: true
+      ## HTTP Routers
+      traefik.http.routers.requestrr-rtr.entrypoints: https
+      traefik.http.routers.requestrr-rtr.rule: HostHeader(`requestrr.$DOMAINNAME`)
+      traefik.http.routers.requestrr-rtr.tls: true
+      ## HTTP Services
+      traefik.http.routers.requestrr-rtr.service: requestrr-svc
+      traefik.http.services.requestrr-svc.loadbalancer.server.port: 4545
+      ## Middlewares
+      traefik.http.routers.requestrr-rtr.middlewares: chain-authelia@file
