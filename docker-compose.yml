@@ -32,12 +32,12 @@ networks:
 
 secrets:
 ### Secrets
-  general_gmail_smtp_password_secret:
-    file: $DOCKERDIR/secrets/general_gmail_smtp_password_secret
   authelia_duo_api_secret:
     file: $DOCKERDIR/secrets/authelia_duo_api_secret
   authelia_jwt_secret:
     file: $DOCKERDIR/secrets/authelia_jwt_secret
+  authelia_smtp_secret:
+    file: $DOCKERDIR/secrets/authelia_smtp_secret
   Blueriiot__Password:
     file: $DOCKERDIR/secrets/Blueriiot__Password
   cloudflare_api_key_global_secret:
@@ -138,7 +138,7 @@ services:
       traefik.http.middlewares.redirect-to-https.redirectscheme.scheme: https
       # HTTP Routers
       traefik.http.routers.traefik-rtr.entrypoints: https
-      traefik.http.routers.traefik-rtr.rule: HostHeader(`traefik.$DOMAINNAME`)
+      traefik.http.routers.traefik-rtr.rule: Host(`traefik.$DOMAINNAME`)
       traefik.http.routers.traefik-rtr.tls: true
       #- "traefik.http.routers.traefik-rtr.tls.certresolver=dns-cloudflare" # Comment out this line after first run of traefik to force the use of wildcard certs
       traefik.http.routers.traefik-rtr.tls.domains[0].main: $DOMAINNAME
@@ -186,7 +186,7 @@ services:
     labels:
       # Add hosts specified in rules here to force cf-companion to create the CNAMEs
       # Since cf-companion creates CNAMEs based on host rules, this a workaround for non-docker/external apps
-      traefik.http.routers.cf-companion-rtr.rule: HostHeader(`omv.$DOMAINNAME`)" #|| HostHeader(`vpn.$DOMAINNAME`)"
+      traefik.http.routers.cf-companion-rtr.rule: Host(`omv.$DOMAINNAME`) #|| Host(`email.$DOMAINNAME`)
 
   # wireguard:
   #   container_name: wireguard
@@ -232,16 +232,16 @@ services:
       TZ: $TZ
       AUTHELIA_JWT_SECRET_FILE: /run/secrets/authelia_jwt_secret
       AUTHELIA_DUO_API_SECRET_KEY_FILE: /run/secrets/authelia_duo_api_secret
-      #AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE: /run/secrets/general_gmail_smtp_password_secret
+      AUTHELIA_NOTIFIER_SMTP_PASSWORD_FILE: /run/secrets/authelia_smtp_secret
     secrets:
       - authelia_jwt_secret
       - authelia_duo_api_secret
-      - general_gmail_smtp_password_secret
+      - authelia_smtp_secret
     labels:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.authelia-rtr.entrypoints: https
-      traefik.http.routers.authelia-rtr.rule: HostHeader(`authelia.$DOMAINNAME`)
+      traefik.http.routers.authelia-rtr.rule: Host(`authelia.$DOMAINNAME`)
       traefik.http.routers.authelia-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.authelia-rtr.service: authelia-svc
@@ -424,7 +424,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.glances-rtr.entrypoints: https
-      traefik.http.routers.glances-rtr.rule: HostHeader(`glances.$DOMAINNAME`)
+      traefik.http.routers.glances-rtr.rule: Host(`glances.$DOMAINNAME`)
       traefik.http.routers.glances-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.glances-rtr.service: glances-svc
@@ -452,7 +452,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.doozle-rtr.entrypoints: https
-      traefik.http.routers.doozle-rtr.rule: HostHeader(`logs.$DOMAINNAME`)
+      traefik.http.routers.doozle-rtr.rule: Host(`logs.$DOMAINNAME`)
       traefik.http.routers.doozle-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.doozle-rtr.service: doozle-svc
@@ -479,7 +479,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.pma-rtr.entrypoints: https
-      traefik.http.routers.pma-rtr.rule: HostHeader(`pma.$DOMAINNAME`)
+      traefik.http.routers.pma-rtr.rule: Host(`pma.$DOMAINNAME`)
       traefik.http.routers.pma-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.pma-rtr.service: pma-svc
@@ -503,7 +503,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.uptime-rtr.entrypoints: https
-      traefik.http.routers.uptime-rtr.rule: HostHeader(`monitor.$DOMAINNAME`)
+      traefik.http.routers.uptime-rtr.rule: Host(`monitor.$DOMAINNAME`)
       traefik.http.routers.uptime-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.uptime-rtr.service: uptime-svc
@@ -587,7 +587,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.vaultwarden-rtr.entrypoints: https
-      traefik.http.routers.vaultwarden-rtr.rule: HostHeader(`passwd.$DOMAINNAME`)
+      traefik.http.routers.vaultwarden-rtr.rule: Host(`passwd.$DOMAINNAME`)
       traefik.http.routers.vaultwarden-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.vaultwarden-rtr.service: vaultwarden-svc
@@ -618,7 +618,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.hassio-rtr.entrypoints: https
-      traefik.http.routers.hassio-rtr.rule: HostHeader(`hassio.$DOMAINNAME`)
+      traefik.http.routers.hassio-rtr.rule: Host(`hassio.$DOMAINNAME`)
       traefik.http.routers.hassio-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.hassio-rtr.service: hassio-svc
@@ -663,7 +663,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.paperless-rtr.entrypoints: https
-      traefik.http.routers.paperless-rtr.rule: HostHeader(`docs.$DOMAINNAME`)
+      traefik.http.routers.paperless-rtr.rule: Host(`docs.$DOMAINNAME`)
       traefik.http.routers.paperless-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.paperless-rtr.service: paperless-svc
@@ -702,7 +702,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.seafile-rtr.entrypoints: https
-      traefik.http.routers.seafile-rtr.rule: HostHeader(`data.$DOMAINNAME`)
+      traefik.http.routers.seafile-rtr.rule: Host(`data.$DOMAINNAME`)
       traefik.http.routers.seafile-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.seafile-rtr.service: seafile-svc
@@ -724,7 +724,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.dashboard-rtr.entrypoints: https
-      traefik.http.routers.dashboard-rtr.rule: HostHeader(`home.$DOMAINNAME`)
+      traefik.http.routers.dashboard-rtr.rule: Host(`home.$DOMAINNAME`)
       traefik.http.routers.dashboard-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.dashboard-rtr.service: dashboard-svc
@@ -750,7 +750,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.sigal-nginx-rtr.entrypoints: https
-      traefik.http.routers.sigal-nginx-rtr.rule: HostHeader(`photos.$DOMAINNAME`)
+      traefik.http.routers.sigal-nginx-rtr.rule: Host(`photos.$DOMAINNAME`)
       traefik.http.routers.sigal-nginx-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.sigal-nginx-rtr.service: sigal-nginx-svc
@@ -789,7 +789,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.planka-rtr.entrypoints: https
-      traefik.http.routers.planka-rtr.rule: HostHeader(`board.$DOMAINNAME`)
+      traefik.http.routers.planka-rtr.rule: Host(`board.$DOMAINNAME`)
       traefik.http.routers.planka-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.planka-rtr.service: planka-svc
@@ -825,7 +825,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.mealie-rtr.entrypoints: https
-      traefik.http.routers.mealie-rtr.rule: HostHeader(`food.$DOMAINNAME`)
+      traefik.http.routers.mealie-rtr.rule: Host(`food.$DOMAINNAME`)
       traefik.http.routers.mealie-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.mealie-rtr.service: mealie-svc
@@ -854,7 +854,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.jellyfin-rtr.entrypoints: https
-      traefik.http.routers.jellyfin-rtr.rule: HostHeader(`media.$DOMAINNAME`)
+      traefik.http.routers.jellyfin-rtr.rule: Host(`media.$DOMAINNAME`)
       traefik.http.routers.jellyfin-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.jellyfin-rtr.service: jellyfin-svc
@@ -882,7 +882,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.sabnzbd-rtr.entrypoints: https
-      traefik.http.routers.sabnzbd-rtr.rule: HostHeader(`download.$DOMAINNAME`)
+      traefik.http.routers.sabnzbd-rtr.rule: Host(`download.$DOMAINNAME`)
       traefik.http.routers.sabnzbd-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.sabnzbd-rtr.service: sabnzbd-svc
@@ -911,7 +911,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.sonarr-rtr.entrypoints: https
-      traefik.http.routers.sonarr-rtr.rule: HostHeader(`series.$DOMAINNAME`)
+      traefik.http.routers.sonarr-rtr.rule: Host(`series.$DOMAINNAME`)
       traefik.http.routers.sonarr-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.sonarr-rtr.service: sonarr-svc
@@ -940,7 +940,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.radarr-rtr.entrypoints: https
-      traefik.http.routers.radarr-rtr.rule: HostHeader(`movies.$DOMAINNAME`)
+      traefik.http.routers.radarr-rtr.rule: Host(`movies.$DOMAINNAME`)
       traefik.http.routers.radarr-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.radarr-rtr.service: radarr-svc
@@ -967,7 +967,7 @@ services:
       traefik.enable: true
       ## HTTP Routers
       traefik.http.routers.requestrr-rtr.entrypoints: https
-      traefik.http.routers.requestrr-rtr.rule: HostHeader(`requestrr.$DOMAINNAME`)
+      traefik.http.routers.requestrr-rtr.rule: Host(`requestrr.$DOMAINNAME`)
       traefik.http.routers.requestrr-rtr.tls: true
       ## HTTP Services
       traefik.http.routers.requestrr-rtr.service: requestrr-svc
